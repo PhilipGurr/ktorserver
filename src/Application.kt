@@ -13,6 +13,8 @@ import io.ktor.auth.*
 import io.ktor.auth.jwt.*
 import io.ktor.jackson.*
 import io.ktor.features.*
+import io.ktor.server.engine.*
+import io.ktor.server.netty.*
 import org.jetbrains.exposed.sql.Database
 import org.jetbrains.exposed.sql.SchemaUtils
 import org.jetbrains.exposed.sql.transactions.transaction
@@ -21,7 +23,9 @@ import org.koin.ktor.ext.inject
 import org.koin.logger.slf4jLogger
 import javax.naming.AuthenticationException
 
-fun main(args: Array<String>): Unit = io.ktor.server.netty.EngineMain.main(args)
+fun main(args: Array<String>) {
+    embeddedServer(Netty, commandLineEnvironment(args)).start(wait = true)
+}
 
 private val jwt = SimpleJWT(secret = "SomeSecret321")
 

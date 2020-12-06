@@ -8,6 +8,7 @@ import io.ktor.http.*
 import com.fasterxml.jackson.databind.*
 import com.philipgurr.auth.SimpleJWT
 import com.philipgurr.database.*
+import com.philipgurr.di.applicationModule
 import io.ktor.auth.*
 import io.ktor.auth.jwt.*
 import io.ktor.jackson.*
@@ -15,6 +16,9 @@ import io.ktor.features.*
 import org.jetbrains.exposed.sql.Database
 import org.jetbrains.exposed.sql.SchemaUtils
 import org.jetbrains.exposed.sql.transactions.transaction
+import org.koin.ktor.ext.Koin
+import org.koin.ktor.ext.inject
+import org.koin.logger.slf4jLogger
 import javax.naming.AuthenticationException
 
 fun main(args: Array<String>): Unit = io.ktor.server.netty.EngineMain.main(args)
@@ -24,7 +28,25 @@ private val jwt = SimpleJWT(secret = "SomeSecret321")
 @Suppress("unused") // Referenced in application.conf
 fun Application.module() {
     initDatabase()
+    installFeatures()
 
+    val userRepo by inject<UserRepository>()
+    val snippetRepo by inject<SnippetRepository>()
+
+    routing {
+        routeUser(jwt, userRepo)
+        routeSnippets(snippetRepo)
+    }
+}
+
+private fun initDatabase() {
+    Database.connect("jdbc:h2:mem:regular;DB_CLOSE_DELAY=-1", "org.h2.Driver")
+    transaction {
+        SchemaUtils.create(Users, Snippets)
+    }
+}
+
+private fun Application.installFeatures() {
     install(CallLogging)
     install(ContentNegotiation) {
         jackson {
@@ -50,17 +72,9 @@ fun Application.module() {
             }
         }
     }
-
-    routing {
-        routeUser(jwt, ExposedUserRepository())
-        routeSnippets(ExposedSnippetRepository())
-    }
-}
-
-private fun initDatabase() {
-    Database.connect("jdbc:h2:mem:regular;DB_CLOSE_DELAY=-1", "org.h2.Driver")
-    transaction {
-        SchemaUtils.create(Users, Snippets)
+    install(Koin) {
+        slf4jLogger()
+        modules(applicationModule)
     }
 }
 

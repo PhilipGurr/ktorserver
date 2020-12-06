@@ -1,31 +1,47 @@
 package com.philipgurr
 
-import com.auth0.jwt.JWT
-import com.auth0.jwt.JWTVerifier
-import com.auth0.jwt.algorithms.Algorithm
 import io.ktor.application.*
 import io.ktor.response.*
 import io.ktor.request.*
 import io.ktor.routing.*
 import io.ktor.http.*
 import com.fasterxml.jackson.databind.*
+import com.philipgurr.auth.SimpleJWT
+import com.philipgurr.database.*
 import io.ktor.auth.*
 import io.ktor.auth.jwt.*
 import io.ktor.jackson.*
 import io.ktor.features.*
+import org.jetbrains.exposed.sql.Database
+import org.jetbrains.exposed.sql.SchemaUtils
+import org.jetbrains.exposed.sql.transactions.transaction
+import javax.naming.AuthenticationException
 
 fun main(args: Array<String>): Unit = io.ktor.server.netty.EngineMain.main(args)
 
+private val jwt = SimpleJWT(secret = "SomeSecret321")
+
 @Suppress("unused") // Referenced in application.conf
 fun Application.module() {
+    initDatabase()
+
     install(CallLogging)
     install(ContentNegotiation) {
         jackson {
             enable(SerializationFeature.INDENT_OUTPUT)
         }
     }
-
-    val jwt = SimpleJWT(secret = "SomeSecret321")
+    install(StatusPages) {
+        exception<Throwable> {
+            call.respond(HttpStatusCode.InternalServerError)
+        }
+        exception<AuthenticationException> {
+            call.respond(HttpStatusCode.Unauthorized)
+        }
+        exception<BadRequestException> {
+            call.respond(HttpStatusCode.BadRequest)
+        }
+    }
     install(Authentication) {
         jwt {
             verifier(jwt.verifier)
@@ -35,40 +51,61 @@ fun Application.module() {
         }
     }
 
-    val users = mutableListOf<UsernamePassword>()
-
     routing {
-        authenticate {
-            get("/") {
-                val principal = call.principal<UserIdPrincipal>() ?: error("No Principal!")
-                call.respondText("HELLO ${principal.name}!", contentType = ContentType.Text.Plain)
-            }
-        }
-
-        auth(jwt, users)
+        routeUser(jwt, ExposedUserRepository())
+        routeSnippets(ExposedSnippetRepository())
     }
 }
 
-fun Route.auth(jwt: SimpleJWT, users: MutableList<UsernamePassword>) {
+private fun initDatabase() {
+    Database.connect("jdbc:h2:mem:regular;DB_CLOSE_DELAY=-1", "org.h2.Driver")
+    transaction {
+        SchemaUtils.create(Users, Snippets)
+    }
+}
+
+fun Route.routeUser(jwt: SimpleJWT, userRepository: UserRepository) {
     post("/authenticate") {
         val post = call.receive<UsernamePassword>()
-        val user = if(users.contains(post)) post else {
-            users.add(post)
-            post
+        val user = userRepository.getByUsername(post.username) ?: throw BadRequestException("User not found")
+        if(user.password == post.password) {
+            call.respond(mapOf("token" to jwt.sign(user.userId.toString())))
+        } else {
+            throw AuthenticationException()
         }
-        call.respond(mapOf("token" to jwt.sign(user.username)))
+    }
+    route("/users") {
+        post {
+            val user = call.receive<User>()
+            val new = userRepository.add(user)
+            call.respond(new)
+        }
+        authenticate {
+            get("/{userId}") {
+                val userId = call.parameters["userId"]?.toInt() ?: -1
+                call.respond(userRepository.getById(userId) ?: throw BadRequestException("User not found"))
+            }
+        }
     }
 }
 
-data class UsernamePassword(
-    val id: Int = 0,
-    val username: String,
-    val password: String
-)
-
-open class SimpleJWT(val secret: String) {
-    private val algorithm = Algorithm.HMAC256(secret)
-    val verifier: JWTVerifier = JWT.require(algorithm).build()
-    fun sign(name: String): String = JWT.create().withClaim("id", name).sign(algorithm)
+fun Route.routeSnippets(snippetRepository: SnippetRepository) {
+    authenticate {
+        route("/snippets") {
+            get {
+                val userId = call.principal<UserIdPrincipal>()?.name?.toInt() ?: throw AuthenticationException()
+                call.respond(snippetRepository.getAllForUser(userId))
+            }
+            get("/{snippetId}") {
+                val snippetId = call.parameters["snippetId"]?.toInt() ?: -1
+                call.respond(snippetRepository.getById(snippetId) ?: throw BadRequestException("Snippet not found"))
+            }
+            post {
+                val userId = call.principal<UserIdPrincipal>()?.name?.toInt() ?: throw AuthenticationException()
+                val snippet = call.receive<Snippet>()
+                val new = snippetRepository.add(snippet.copy(userId = userId)) ?: throw BadRequestException("Could not add snippet")
+                call.respond(new)
+            }
+        }
+    }
 }
-

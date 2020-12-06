@@ -67,6 +67,9 @@ private fun Application.installFeatures() {
         exception<BadRequestException> {
             call.respond(HttpStatusCode.BadRequest)
         }
+        exception<ForbiddenException> {
+            call.respond(HttpStatusCode.Forbidden)
+        }
     }
     install(Authentication) {
         jwt {
@@ -121,9 +124,12 @@ fun Route.routeSnippets(snippetRepository: SnippetRepository) {
             post {
                 val userId = call.principal<UserIdPrincipal>()?.name?.toInt() ?: throw AuthenticationException()
                 val snippet = call.receive<Snippet>()
+                if(snippet.userId != userId) throw ForbiddenException()
                 val new = snippetRepository.add(snippet.copy(userId = userId)) ?: throw BadRequestException("Could not add snippet")
                 call.respond(new)
             }
         }
     }
 }
+
+class ForbiddenException : Exception()

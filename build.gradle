@@ -45,6 +45,7 @@ dependencies {
     testImplementation "io.ktor:ktor-server-tests:$ktor_version"
     implementation "io.ktor:ktor-auth:$ktor_version"
     implementation "io.ktor:ktor-auth-jwt:$ktor_version"
+    implementation "io.ktor:ktor-websockets:$ktor_version"
 
     compile "org.koin:koin-ktor:$koin_version"
     compile "org.koin:koin-logger-slf4j:$koin_version"

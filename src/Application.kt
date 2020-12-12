@@ -13,19 +13,18 @@ import io.ktor.auth.*
 import io.ktor.auth.jwt.*
 import io.ktor.jackson.*
 import io.ktor.features.*
-import io.ktor.server.engine.*
-import io.ktor.server.netty.*
+import io.ktor.http.cio.websocket.*
+import io.ktor.websocket.*
 import org.jetbrains.exposed.sql.Database
 import org.jetbrains.exposed.sql.SchemaUtils
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.koin.ktor.ext.Koin
 import org.koin.ktor.ext.inject
 import org.koin.logger.slf4jLogger
+import java.io.File
 import javax.naming.AuthenticationException
 
-fun main(args: Array<String>) {
-    embeddedServer(Netty, commandLineEnvironment(args)).start(wait = true)
-}
+fun main(args: Array<String>): Unit = io.ktor.server.netty.EngineMain.main(args)
 
 private val jwt = SimpleJWT(secret = "SomeSecret321")
 
@@ -40,6 +39,7 @@ fun Application.module() {
     routing {
         routeUser(jwt, userRepo)
         routeSnippets(snippetRepo)
+        routeLiveSnippet()
     }
 }
 
@@ -83,53 +83,7 @@ private fun Application.installFeatures() {
         slf4jLogger()
         modules(applicationModule)
     }
-}
-
-fun Route.routeUser(jwt: SimpleJWT, userRepository: UserRepository) {
-    post("/authenticate") {
-        val post = call.receive<UsernamePassword>()
-        val user = userRepository.getByUsername(post.username) ?: throw BadRequestException("User not found")
-        if(user.password == post.password) {
-            call.respond(mapOf("token" to jwt.sign(user.userId.toString())))
-        } else {
-            throw AuthenticationException()
-        }
-    }
-    route("/users") {
-        post {
-            val user = call.receive<User>()
-            val new = userRepository.add(user)
-            call.respond(new)
-        }
-        authenticate {
-            get("/{userId}") {
-                val userId = call.parameters["userId"]?.toInt() ?: -1
-                call.respond(userRepository.getById(userId) ?: throw BadRequestException("User not found"))
-            }
-        }
-    }
-}
-
-fun Route.routeSnippets(snippetRepository: SnippetRepository) {
-    authenticate {
-        route("/snippets") {
-            get {
-                val userId = call.principal<UserIdPrincipal>()?.name?.toInt() ?: throw AuthenticationException()
-                call.respond(snippetRepository.getAllForUser(userId))
-            }
-            get("/{snippetId}") {
-                val snippetId = call.parameters["snippetId"]?.toInt() ?: -1
-                call.respond(snippetRepository.getById(snippetId) ?: throw BadRequestException("Snippet not found"))
-            }
-            post {
-                val userId = call.principal<UserIdPrincipal>()?.name?.toInt() ?: throw AuthenticationException()
-                val snippet = call.receive<Snippet>()
-                if(snippet.userId != userId) throw ForbiddenException()
-                val new = snippetRepository.add(snippet.copy(userId = userId)) ?: throw BadRequestException("Could not add snippet")
-                call.respond(new)
-            }
-        }
-    }
+    install(WebSockets)
 }
 
 class ForbiddenException : Exception()
